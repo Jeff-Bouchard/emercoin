@@ -105,7 +105,7 @@ class EmcDns {
     bool CheckEnumSigList(const char *q_str, char *siglist_str, char sig_separ);
     bool CheckEnumSig(const char *q_str, char *sig_str, char sig_separ);
     void AddTF(char *tf_tok);
-    bool CheckDAP(void *key, int len, uint16_t inctemp);
+    bool CheckDAP(const void *key, int len, uint16_t inctemp);
 
     void Fill_RD_SRV(char *txt);
     // Wire format: Usage[1] Selector[1] Matching[1] TXT[*]

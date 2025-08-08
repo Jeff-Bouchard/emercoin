@@ -113,13 +113,21 @@ int inet_pton(int af, const char *src, void *dst)
 }
 
 const char *inet_ntop(int af, const void *src, char *dst, socklen_t size) {
-  if(size > 16) size = 16;
-  uint8_t *p = (uint8_t *)src;
-  const char *rc = dst;
-  while(size--)
-    dst += sprintf(dst, "%02x:", *p++);
-  dst[-1] = 0;
-  return rc;
+    const char *bytes = (const char *)src;
+    switch(af) {
+        case AF_INET:
+            snprintf(dst, size, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
+            return dst;
+        case AF_INET6:
+            snprintf(dst, size, 
+                    "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:", 
+                    bytes[0], bytes[1],   bytes[2],  bytes[3]
+                    bytes[4], bytes[5],   bytes[6],  bytes[7]
+                    bytes[8], bytes[9],   bytes[10], bytes[11]
+                    bytes[12], bytes[13], bytes[14], bytes[15]
+                    );
+            return dst;
+    }
 }
 
 char *strsep(char **s, const char *ct)
@@ -169,8 +177,14 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
     memset(&m_hdr, 0, &m_verbose - (uint8_t *)&m_hdr); // Clear previous state
     m_verbose = verbose;
 
-    // Create and bind socket IPv6, if possible
-    int ret = socket(PF_INET6, SOCK_DGRAM, 0);
+    int ret = -1;
+    // If bind IP started with ".", then we will create IPv4 socket
+    // Otherwise, try to open IPv6 in dual mode.
+    // For INADDR_ANY, yous just "." as Bind IP, or ".0.0.0.0"
+    if(bind_ip[0] == '.')
+        bind_ip++; // Skip dot, use "-1" here
+    else
+        ret = socket(PF_INET6, SOCK_DGRAM, 0); // Try to create IPv6 socket
     if(ret < 0) {
         // Cannot create IPv46 - try IPv4
         // Create and bind socket - IPv4 Only
@@ -184,12 +198,23 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
         memset(&sin, 0, sinlen);
         sin.sin_port = htons(port_no);
         sin.sin_family = AF_INET;
+        int yes = 1;
+#ifdef WIN32
+        if( (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR,  (char *)&yes, sizeof(yes)) < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEPORT,  (char *)&yes, sizeof(yes)) < 0))
+#else
+        if( (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR,  (void *)&yes, sizeof(yes)) < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEPORT,  (void *)&yes, sizeof(yes)) < 0))
+#endif
+            throw runtime_error("EmcDns::EmcDns: Cannot SO_REUSEADDR|SO_REUSEPORT for IPv4 socket to IPV4 socket");
 
         if(*bind_ip == 0 || inet_pton(AF_INET, bind_ip, &sin.sin_addr) != 1) {
             sin.sin_addr.s_addr = INADDR_ANY;
             bind_ip = NULL;
         }
 
+        char buf[INET6_ADDRSTRLEN];
+	    LogPrintf("EmcDns::EmcDns: Bind to IPv4=%s:%u\n", inet_ntop(AF_INET, &sin.sin_addr.s_addr, buf, INET6_ADDRSTRLEN), port_no);
         if(::bind(m_sockfd, (struct sockaddr *)&sin, sinlen) < 0) {
             char buf[80];
             sprintf(buf, "EmcDns::EmcDns: Cannot bind to IPv4 port %u", port_no);
@@ -208,17 +233,24 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
             sin6.sin6_addr = in6addr_any;
             bind_ip = NULL;
         }
-        int no = 0;
+        int no  = 0;
+        int yes = 1;
 #ifdef WIN32
-        if(setsockopt(m_sockfd, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&no, sizeof(no)) < 0)
+        if( (setsockopt(m_sockfd, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&no,  sizeof(no))  < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR,  (char *)&yes, sizeof(yes)) < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEPORT,  (char *)&yes, sizeof(yes)) < 0))
 #else
-        if(setsockopt(m_sockfd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&no, sizeof(no)) < 0)
+        if( (setsockopt(m_sockfd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&no,  sizeof(no))  < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR,  (void *)&yes, sizeof(yes)) < 0)
+         || (setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEPORT,  (void *)&yes, sizeof(yes)) < 0))
 #endif
             throw runtime_error("EmcDns::EmcDns: Cannot switch socket to IPV4 compatibility mode");
 
+        char buf[INET6_ADDRSTRLEN];
+	    LogPrintf("EmcDns::EmcDns: Bind to IPv6=[%s]:%u\n", inet_ntop(AF_INET6, &sin6.sin6_addr, buf, INET6_ADDRSTRLEN), port_no);
         if(::bind(m_sockfd, (struct sockaddr *)&sin6, sin6len) < 0) {
             char buf[80];
-            sprintf(buf, "EmcDns::EmcDns: Cannot bind to IPv46 port %u", port_no);
+            sprintf(buf, "EmcDns::EmcDns: Cannot bind to IPv46 port %u; error: %s", port_no, strerror(errno));
             throw runtime_error(buf);
         }
     } // IPv46
@@ -341,7 +373,7 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
             switch(c) {
               case '.':
                 dnstype = "DNS-no-sig";
-                *p = 0200 | MAX_DOM; // Set flag signature-no-check (sigOK)
+                *p = char(0200 | MAX_DOM); // Set flag signature-no-check (sigOK)
                 break;
               case '!':
                 dnstype = "DNS-sig";
@@ -349,7 +381,7 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
                 break;
               case '~':
                 dnstype = "ENUM-no-sig";
-                *p = 0200 | MAX_ENUM; // Set flag signature-no-check (sigOK)
+                *p = (char)(0200 | MAX_ENUM); // Set flag signature-no-check (sigOK)
                 m_ht_offset[pos] |= ENUM_FLAG;
                 break;
               case '$':
@@ -480,13 +512,13 @@ void EmcDns::Run() {
     MilliSleep(133);
 
   for( ; ; ) {
-    struct sockaddr_in6 sin6;
-    socklen_t sin6len = sizeof(struct sockaddr_in6);
+     struct sockaddr_storage ss;
+     socklen_t sslen = sizeof(ss);
+     m_rcvlen = recvfrom(m_sockfd, (char *)m_buf, BUF_SIZE, 0,
+             (struct sockaddr *)&ss, &sslen);
 
-    m_rcvlen = recvfrom(m_sockfd, (char *)m_buf, BUF_SIZE, 0,
-	            (struct sockaddr *)&sin6, &sin6len);
-    if(m_rcvlen <= 0)
-	break;
+     if(m_rcvlen <= 0)
+         break;
 
     if(m_dap_ht) {
       uint32_t now = time(NULL);
@@ -497,20 +529,39 @@ void EmcDns::Run() {
       }
       m_timestamp = now >> EMCDNS_DAPSHIFTDECAY; // time in 256s (~4 min)
     }
-    if(CheckDAP(&sin6.sin6_addr, sin6len, m_rcvlen >> 5)) {
+
+    const void  *addr_ptr;
+    char         ip_str[INET6_ADDRSTRLEN];
+    uint16_t     addr_len;
+    if(ss.ss_family == AF_INET) {
+        const struct sockaddr_in *sin4 = (const struct sockaddr_in *)&ss;
+        addr_ptr = &sin4->sin_addr; 
+        addr_len = sizeof(sin4->sin_addr); 
+    } else {
+        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)&ss;
+        addr_ptr = &sin6->sin6_addr;
+        addr_len = sizeof(sin6->sin6_addr);
+    }
+
+    if(m_verbose > 4) 
+        LogPrintf(" *** EmcDns::Run: Got packet_len=%d from: %s\n", m_rcvlen, 
+                inet_ntop(ss.ss_family, addr_ptr, ip_str, INET6_ADDRSTRLEN));
+    
+    if(CheckDAP(addr_ptr, addr_len, m_rcvlen >> 5)) {
       m_buf[BUF_SIZE] = 0; // Set terminal for infinity QNAME
       uint16_t rc = HandlePacket();
       uint16_t add_temp = rc == 0? 0 : 100;
       if(rc != 0xDead) {
         uint32_t packet_len = m_snd - m_buf;
         sendto(m_sockfd, (const char *)m_buf, packet_len, MSG_NOSIGNAL,
-	             (struct sockaddr *)&sin6, sin6len);
+	             (const struct sockaddr *)&ss, sslen);
         add_temp += packet_len >> 5; // Add temp for long answer
       } else
           add_temp += 50;
-      CheckDAP(&sin6.sin6_addr, sin6len, add_temp); // More heat!
+      CheckDAP(addr_ptr, addr_len, add_temp); // More heat!
     } // dap check
   } // for
+
 
   if(m_verbose > 1) LogPrintf("EmcDns::Run: Received Exit packet_len=%d\n", m_rcvlen);
 
@@ -731,7 +782,7 @@ uint16_t EmcDns::HandleQuery() {
   if(p_tld != NULL && LocalSearch(key, pos0, step0) > 0)
     p_tld = NULL; // local search is OK, do not perform nameindex search
 
-  char maxlen_domchain = MAX_DOM | 0200; // default len=20, no SIG check
+  char maxlen_domchain = (char)(MAX_DOM | 0200); // default len=20, no SIG check
   // If local search is unsuccessful, try to search in the nameindex DB.
   if(p_tld) {
     if(step == 0) { // pure dotless name, like "coin"
@@ -1327,7 +1378,7 @@ int EmcDns::LocalSearch(const uint8_t *key, uint8_t pos, uint8_t step) {
 /*---------------------------------------------------*/
 #define ROLADD(h,s,x)   h = ((h << s) | (h >> (32 - s))) + (x)
 // Returns true - can handle packet; false = ignore
-bool EmcDns::CheckDAP(void *key, int len, uint16_t inctemp) {
+bool EmcDns::CheckDAP(const void *key, int len, uint16_t inctemp) {
   if(m_dap_ht == NULL)
     return true; // Filter is inactive
 
@@ -1369,9 +1420,9 @@ bool EmcDns::CheckDAP(void *key, int len, uint16_t inctemp) {
   m_mintemp = mintemp; // Save for logging
   bool rc = mintemp < m_dap_treshold;
   if(m_verbose > 5 || (!rc && m_verbose > 3)) {
-    char buf[80], outbuf[120];
+    char buf[INET6_ADDRSTRLEN], outbuf[120 + INET6_ADDRSTRLEN];
     snprintf(outbuf, sizeof(outbuf), "EmcDns::CheckDAP: IP=[%s] inctemp=%u, mintemp=%u dap_treshold=%u rc=%d\n",
-		    len < 0? (const char *)key : inet_ntop(len == 4? AF_INET : AF_INET6, key, buf, len),
+		    len < 0? (const char *)key : inet_ntop(len == 4? AF_INET : AF_INET6, key, buf, INET6_ADDRSTRLEN),
                     inctemp, mintemp, m_dap_treshold, rc);
     LogPrintf(outbuf);
   }
