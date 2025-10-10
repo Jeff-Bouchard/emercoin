@@ -119,8 +119,8 @@ const char *inet_ntop(int af, const void *src, char *dst, socklen_t size) {
             snprintf(dst, size, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
             return dst;
         case AF_INET6:
-            snprintf(dst, size, 
-                    "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:", 
+            snprintf(dst, size,
+                    "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:",
                     bytes[0], bytes[1],   bytes[2],  bytes[3]
                     bytes[4], bytes[5],   bytes[6],  bytes[7]
                     bytes[8], bytes[9],   bytes[10], bytes[11]
@@ -446,7 +446,7 @@ EmcDns::EmcDns(const char *bind_ip, uint16_t port_no,
     } else
       m_value[0] = 0;
 
-    m_self_ns = gArgs.GetArg("-selfns", "localhost");
+    m_self_ns = gArgs.GetArg("-selfns", "");
     if(m_self_ns.size() > 512) {
 	LogPrintf("    EmcDns::EmcDns: too long selfns=%s; ignored\n", m_self_ns.c_str());
         m_self_ns.clear();
@@ -535,18 +535,18 @@ void EmcDns::Run() {
     uint16_t     addr_len;
     if(ss.ss_family == AF_INET) {
         const struct sockaddr_in *sin4 = (const struct sockaddr_in *)&ss;
-        addr_ptr = &sin4->sin_addr; 
-        addr_len = sizeof(sin4->sin_addr); 
+        addr_ptr = &sin4->sin_addr;
+        addr_len = sizeof(sin4->sin_addr);
     } else {
         const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)&ss;
         addr_ptr = &sin6->sin6_addr;
         addr_len = sizeof(sin6->sin6_addr);
     }
 
-    if(m_verbose > 4) 
-        LogPrintf(" *** EmcDns::Run: Got packet_len=%d from: %s\n", m_rcvlen, 
+    if(m_verbose > 4)
+        LogPrintf(" *** EmcDns::Run: Got packet_len=%d from: %s\n", m_rcvlen,
                 inet_ntop(ss.ss_family, addr_ptr, ip_str, INET6_ADDRSTRLEN));
-    
+
     if(CheckDAP(addr_ptr, addr_len, m_rcvlen >> 5)) {
       m_buf[BUF_SIZE] = 0; // Set terminal for infinity QNAME
       uint16_t rc = HandlePacket();
@@ -1001,7 +1001,7 @@ void EmcDns::Answer_ALL(uint16_t qtype, char *buf) {
       int orig_tokQty = tokQty;
       for(int tok_no = 0; tok_no < orig_tokQty; tok_no++)
           if(tokens[tok_no][0] == '@') {
-              if(self_list == (char *)0x1) {
+              if(self_list == (char *)0x1 && !m_self_ns.empty()) {
                   // Expand '@' just once
                   self_list = (char *)memcpy(alloca(m_self_ns.length() + 1), m_self_ns.c_str(), m_self_ns.length() + 1);
                   while(char *tok = strsep(&self_list, ",|;"))
