@@ -35,6 +35,25 @@ static const int DEFAULT_HTTP_CLIENT_TIMEOUT=900;
 static const bool DEFAULT_NAMED=false;
 static const int CONTINUE_EXECUTION=-1;
 
+static std::string ExtractNameShowValue(const UniValue& result)
+{
+    if (!result.isObject()) {
+        if (result.isStr()) {
+            return result.get_str();
+        }
+        return result.write(2);
+    }
+
+    const UniValue value = find_value(result, "value");
+    if (value.isNull()) {
+        return "No 'value' found";
+    }
+    if (value.isStr()) {
+        return value.get_str();
+    }
+    return value.write(2);
+}
+
 static void SetupCliArgs()
 {
     SetupHelpOptions(gArgs);
@@ -50,6 +69,7 @@ static void SetupCliArgs()
     SetupChainParamsBaseOptions();
     gArgs.AddArg("-named", strprintf("Pass named instead of positional arguments (default: %s)", DEFAULT_NAMED), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpcclienttimeout=<n>", strprintf("Timeout in seconds during HTTP requests, or 0 for no timeout. (default: %d)", DEFAULT_HTTP_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-v", "Post-process name_show output using emercoin-value parsing", ArgsManager::ALLOW_BOOL, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpcconnect=<ip>", strprintf("Send commands to node running on <ip> (default: %s)", DEFAULT_RPCCONNECT), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpccookiefile=<loc>", "Location of the auth cookie. Relative paths will be prefixed by a net-specific datadir location. (default: data dir)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -460,6 +480,12 @@ static int CommandLineRPC(int argc, char *argv[])
             args.erase(args.begin()); // Remove trailing method name from arguments vector
         }
 
+        bool trailing_value_flag = false;
+        if (method == "name_show" && !args.empty() && args.back() == "-v") {
+            trailing_value_flag = true;
+            args.pop_back();
+        }
+
         // Execute and handle connection failures with -rpcwait
         const bool fWait = gArgs.GetBoolArg("-rpcwait", false);
         do {
@@ -467,8 +493,8 @@ static int CommandLineRPC(int argc, char *argv[])
                 const UniValue reply = CallRPC(rh.get(), method, args);
 
                 // Parse reply
-                const UniValue& result = find_value(reply, "result");
-                const UniValue& error  = find_value(reply, "error");
+                const UniValue result = find_value(reply, "result");
+                const UniValue error  = find_value(reply, "error");
 
                 if (!error.isNull()) {
                     // Error
@@ -492,12 +518,27 @@ static int CommandLineRPC(int argc, char *argv[])
                     }
                 } else {
                     // Result
-                    if (result.isNull())
+                    if (result.isNull()) {
                         strPrint = "";
-                    else if (result.isStr())
-                        strPrint = result.get_str();
-                    else
-                        strPrint = result.write(2);
+                    } else {
+                        const bool flag_value = gArgs.GetBoolArg("-v", false) || trailing_value_flag;
+
+                        if (method == "name_show") {
+                            if (flag_value) {
+                                strPrint = ExtractNameShowValue(result);
+                            } else if (result.isStr()) {
+                                strPrint = result.get_str();
+                            } else {
+                                strPrint = result.write(2);
+                            }
+                        } else {
+                            if (result.isStr()) {
+                                strPrint = result.get_str();
+                            } else {
+                                strPrint = result.write(2);
+                            }
+                        }
+                    }
                 }
                 // Connection succeeded, no need to retry.
                 break;
