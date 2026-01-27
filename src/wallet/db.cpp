@@ -879,8 +879,11 @@ bool BerkeleyDatabase::Backup(const std::string& strDest)
                         LogPrintf("cannot backup to wallet source file %s\n", pathDest.string());
                         return false;
                     }
-
+#if __cplusplus >= 201703L
                     fs::copy_file(pathSrc, pathDest, fs::copy_options::overwrite_existing);
+#else
+                    fs::copy_file(pathSrc, pathDest, fs::copy_option::overwrite_if_exists);
+#endif
                     LogPrintf("copied %s to %s\n", strFile, pathDest.string());
                     return true;
                 } catch (const fs::filesystem_error& e) {
