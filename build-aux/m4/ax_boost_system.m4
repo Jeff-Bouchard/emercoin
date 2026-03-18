@@ -108,7 +108,12 @@ AC_DEFUN([AX_BOOST_SYSTEM],
 
             fi
             if test "x$ax_lib" = "x"; then
-                AC_MSG_ERROR(Could not find a version of the Boost::System library!)
+                 # PATCH: Modern Boost (1.81+) compatibility fix.
+                 # Problem: Old M4 scripts expect a physical libboost_system.so, but it's now header-only.
+                 # Fix: Commented out the error exit because ax_cv_boost_system=yes is enough for compilation.
+                 # See: Emercoin build fix for Manjaro/Rolling distros with Boost 1.83.
+                 ##  AC_MSG_ERROR(Could not find a version of the Boost::System library!)
+                AC_MSG_WARN([Could not find a version of the Boost::System library! Continuing as it might be header-only.])
             fi
 			if test "x$link_system" = "xno"; then
 				AC_MSG_ERROR(Could not link against $ax_lib !)
